@@ -1,0 +1,8 @@
+# Build output: several gigabytes, recreated by every build.
+src-tauri/target/
+
+# Downloaded by `npm install`.
+node_modules/
+
+# Written by the Tauri build; recreated automatically.
+src-tauri/gen/schemas/

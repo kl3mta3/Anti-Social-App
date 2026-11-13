@@ -1,0 +1,14 @@
+{
+  "name": "antisocial-companion",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Desktop companion for the Anti Social dungeon finder",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icon": "node scripts/make-icon.mjs && tauri icon src-tauri/icons/source.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}
