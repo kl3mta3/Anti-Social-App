@@ -66,9 +66,9 @@ To place the orb, the companion asks Windows where the game's window is (its pos
 
 ## Installing the addon
 
-The button downloads `AntiSocialAddon.zip` from the latest release of `kl3mta3/Anti-Social-Addon`, falling back to the main branch. The address is fixed in the code. Before anything is written, the download must contain `AntiSocial.toc` and `AntiSocial.lua`; only addon file types are unpacked; entries that try to write outside the addon folder are ignored; and the old copy is only replaced once the new one is fully unpacked. After updating, type `/reload` in game.
+The button downloads the first `.zip` file on the latest release of `kl3mta3/Anti-Social-Addon`, whatever it is called, falling back to the main branch. The repository is fixed in the code. Before anything is written, the download must contain `AntiSocial.toc` and `AntiSocial.lua`; only addon file types are unpacked; entries that try to write outside the addon folder are ignored; and the old copy is only replaced once the new one is fully unpacked. After updating, type `/reload` in game.
 
-To publish an update: raise `## Version` in `AntiSocial.toc`, then create a new GitHub release with a zip named `AntiSocialAddon.zip` that contains the `AntiSocial` folder.
+To publish an update: raise `## Version` in `AntiSocial.toc`, then create a new GitHub release with one zip attached that contains the `AntiSocial` folder. The zip can have any name.
 
 ## Not built yet
 

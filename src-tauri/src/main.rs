@@ -660,12 +660,12 @@ fn read_addon_characters(wow_dir: &str) -> Vec<AddonCharacter> {
 // Installing the addon
 // ---------------------------------------------------------------------------
 
-/// Where the addon is downloaded from: the latest release, then the main branch as a fallback.
-/// Fixed here on purpose, so the app can never be pointed at some other download.
-const ADDON_SOURCES: [&str; 2] = [
-    "https://github.com/kl3mta3/Anti-Social-Addon/releases/latest/download/AntiSocialAddon.zip",
-    "https://github.com/kl3mta3/Anti-Social-Addon/archive/refs/heads/main.zip",
-];
+/// Where the addon is downloaded from: the zip on the latest release, whatever it is named,
+/// then the main branch as a fallback. The repository is fixed here on purpose, so the app can
+/// never be pointed at some other download.
+const ADDON_RELEASE_API: &str = "https://api.github.com/repos/kl3mta3/Anti-Social-Addon/releases/latest";
+const ADDON_RELEASE_FILES: &str = "https://github.com/kl3mta3/Anti-Social-Addon/releases/download/";
+const ADDON_BRANCH_ZIP: &str = "https://github.com/kl3mta3/Anti-Social-Addon/archive/refs/heads/main.zip";
 const ADDON_FOLDER: &str = "AntiSocial";
 const MAX_DOWNLOAD_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_UNPACKED_BYTES: u64 = 30 * 1024 * 1024;
@@ -706,6 +706,33 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
         return Err("the download is larger than an addon should be".into());
     }
     Ok(bytes)
+}
+
+/// The download address of the first zip attached to a release, taken from GitHub's description
+/// of that release. Only a file on GitHub's own download address for the addon's repository counts.
+fn release_zip(release: &Value) -> Option<String> {
+    release.get("assets")?.as_array()?.iter().find_map(|asset| {
+        let name = asset.get("name")?.as_str()?;
+        let url = asset.get("browser_download_url")?.as_str()?;
+        (name.to_ascii_lowercase().ends_with(".zip") && url.starts_with(ADDON_RELEASE_FILES)).then(|| url.to_string())
+    })
+}
+
+/// Downloads the zip attached to the addon's latest release.
+fn download_release_zip() -> Result<Vec<u8>, String> {
+    let release: Value = serde_json::from_slice(&download(ADDON_RELEASE_API)?).map_err(|e| e.to_string())?;
+    let url = release_zip(&release).ok_or_else(|| "the latest release has no zip file".to_string())?;
+    download(&url)
+}
+
+/// Downloads the addon and puts it in the AddOns folder: from the latest release if that works,
+/// otherwise from the main branch. Returns the version installed.
+fn fetch_and_unpack_addon(addons: &Path) -> Result<String, String> {
+    if let Ok(version) = download_release_zip().and_then(|bytes| unpack_addon(&bytes, addons)) {
+        return Ok(version);
+    }
+    let bytes = download(ADDON_BRANCH_ZIP).map_err(|e| format!("Could not download the addon: {e}"))?;
+    unpack_addon(&bytes, addons)
 }
 
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -831,18 +858,9 @@ async fn install_addon(shared: State<'_, SharedState>) -> Result<Value, String> 
         return Err("Set your World of Warcraft Forever folder in Settings first.".into());
     }
     let previous = installed_addon_version(&dir);
-    let version = tauri::async_runtime::spawn_blocking(move || {
-        let mut problem = String::new();
-        for url in ADDON_SOURCES {
-            match download(url) {
-                Ok(bytes) => return unpack_addon(&bytes, &addons),
-                Err(e) => problem = e,
-            }
-        }
-        Err(format!("Could not download the addon: {problem}"))
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+    let version = tauri::async_runtime::spawn_blocking(move || fetch_and_unpack_addon(&addons))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(json!({ "version": version, "previous": previous }))
 }
 
@@ -1308,14 +1326,38 @@ AntiSocialExport = {
     #[ignore]
     fn downloads_and_unpacks_the_published_addon() {
         let addons = temp_addons("download");
-        for url in ADDON_SOURCES {
-            let bytes = download(url).unwrap();
+        let sources: [(&str, fn() -> Result<Vec<u8>, String>); 2] =
+            [("latest release", download_release_zip), ("main branch", || download(ADDON_BRANCH_ZIP))];
+        for (name, fetch) in sources {
+            let bytes = fetch().unwrap();
             let version = unpack_addon(&bytes, &addons).unwrap();
-            println!("{url} -> version {version}, {} bytes", bytes.len());
+            println!("{name} -> version {version}, {} bytes", bytes.len());
             assert!(addons.join("AntiSocial").join("AntiSocial.lua").is_file());
             assert!(addons.join("AntiSocial").join("Libs").join("LibDBIcon-1.0").join("LibDBIcon-1.0.lua").is_file());
         }
+        let version = fetch_and_unpack_addon(&addons).unwrap();
+        println!("install as the app does it -> version {version}");
         let _ = fs::remove_dir_all(&addons);
+    }
+
+    #[test]
+    fn finds_the_release_zip_by_type_not_by_name() {
+        let files = "https://github.com/kl3mta3/Anti-Social-Addon/releases/download/1.0";
+        let release = |assets: Value| json!({ "tag_name": "1.0", "assets": assets });
+
+        // Any name will do, in any letter case, and other kinds of file are passed over.
+        let found = release_zip(&release(json!([
+            { "name": "notes.txt", "browser_download_url": format!("{files}/notes.txt") },
+            { "name": "Whatever-Name.ZIP", "browser_download_url": format!("{files}/Whatever-Name.ZIP") },
+            { "name": "second.zip", "browser_download_url": format!("{files}/second.zip") },
+        ])));
+        assert_eq!(found, Some(format!("{files}/Whatever-Name.ZIP")));
+
+        // No zip, no files at all, or a zip that is not on the addon repository's download address.
+        assert_eq!(release_zip(&release(json!([{ "name": "a.exe", "browser_download_url": format!("{files}/a.exe") }]))), None);
+        assert_eq!(release_zip(&release(json!([]))), None);
+        assert_eq!(release_zip(&json!({ "message": "Not Found" })), None);
+        assert_eq!(release_zip(&release(json!([{ "name": "a.zip", "browser_download_url": "https://example.org/a.zip" }]))), None);
     }
 
     #[test]
